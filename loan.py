@@ -53,6 +53,12 @@ left join (
 ) b ON a.rate_rage = b.rate_rage
 '''
 
+# select * from listing a, loan b where a.loan_origination_date=b.origination_date limit 10;
+# and a.amount_funded=b.amount_borrowed and a.borrower_rate=b.borrower_rate and a.prosper_rating=b.prosper_rating and a.listing_term = b.term limit 10;
+
+
+
+
 def query(sql):
 	return pd.read_sql(sql, conn)
 
@@ -60,11 +66,12 @@ def query(sql):
 def import_listing(file_name):
 	tmp_table = 'tmp_table'
 	i = 1
-	conn = sqlite3.connect("loan.db")
+	conn = sqlite3.connect("prosper.db")
 	for chunk in pd.read_csv(file_name, low_memory=False, chunksize=1000):
 		print(str(i) + ':' + str(len(chunk)))
 		
 		chunk.to_sql(tmp_table , conn)
+		conn.execute('insert into listing select * from ' + tmp_table)
 		conn.execute("drop table " + tmp_table)
 
 		i = i + 1
