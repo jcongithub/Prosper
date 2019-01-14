@@ -6,42 +6,66 @@ import numpy as np
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
 from sklearn.metrics import confusion_matrix, classification_report
+import math
 
 from IPython.core.interactiveshell import InteractiveShell
 InteractiveShell.ast_node_interactivity = "all"
 pd.options.display.width = 1000
+pd.options.display.float_format = '{:,.2f}'.format
 
-
-loan36 = pd.read_csv('loan36.csv')
-print('load {} 36-month loans from loan36.csv'.format(len(loan36)))
-print('loan status:{}'.format(loan36['loan_status_description'].unique()))
-loan36['loan_status_description'].value_counts()
-sns.countplot(x='loan_status_description', data=loan36, palette='hls')
-
-loan36['prosper_rating'].value_counts()
-sns.countplot(x='prosper_rating', data=loan36, palette='hls')
+def monthly_payment(principal, rate, months):
+	return ((rate/12)*principal)/(1-math.pow((1+rate/12), -months))
 
 def summary(data):
-	print('Total Count:{}'.format(len(data)))
+	print('Total Count:{} start:{} end:{}'.format(len(data), data.origination_date.min(), data.origination_date.max()))
 	print('Completed Count:{}'.format(len(data[data['status'] == 'COMPLETED'])))
 	print('DEFAULTED Count:{}'.format(len(data[data['status'] == 'DEFAULTED'])))
 	actual_completion_rate = len(data[data['status'] == 'COMPLETED'])/len(data)
 	actual_default_rate = len(data[data['status'] == 'DEFAULTED'])/len(data)
 	print('Actual completion rate:{}'.format(actual_completion_rate))
 	print('Actual default rate:{}'.format(actual_completion_rate))
-	amount=data['amount_funded'].sum()
+	amount=data['amount_borrowed'].sum()
 	principal=data['principal_paid'].sum()
 	interest=data['interest_paid'].sum()
 	roi = (principal+interest-amount)/amount
 
 	print('Total amount funded:{} principal paid:{} interest paid:{} ROI:{}'.format(amount, principal, interest, roi))
-	stats = data.groupby(['prosper_rating']).borrower_rate.agg(['size','min', 'max', 'mean', 'median'])
-	stats = stats.rename(columns={'size':'count', 'min':'min_rate', 'max':'max_rate', 'mean':'mean_rate', 'median':'median_rate'})
-	counts = data.groupby(['prosper_rating', 'status']).size()
-	stats['completed_count'] = stats.apply(lambda row : counts.loc[(row.name, 'COMPLETED')], axis=1)
-	stats['defaulted_count'] = stats.apply(lambda row : counts.loc[(row.name, 'DEFAULTED')], axis=1)
-	stats['completion_rate'] = stats.apply(lambda row : row['completed_count']/row['count'], axis=1)
-	print(stats)
+	#stats = data.groupby(['prosper_rating']).borrower_rate.agg(['size','min', 'max', 'mean', 'median'])
+	#stats = stats.rename(columns={'size':'count', 'min':'min_rate', 'max':'max_rate', 'mean':'mean_rate', 'median':'median_rate'})
+	#counts = data.groupby(['prosper_rating', 'status']).size()
+	#stats['completed_count'] = stats.apply(lambda row : counts.loc[(row.name, 'COMPLETED')], axis=1)
+	#stats['defaulted_count'] = stats.apply(lambda row : counts.loc[(row.name, 'DEFAULTED')], axis=1)
+	#stats['completion_rate'] = stats.apply(lambda row : row['completed_count']/row['count'], axis=1)
+	#print(stats)
+
+	roi = data.groupby('prosper_rating').agg({'amount_borrowed':['sum'], 'principal_paid':['sum'], 'interest_paid':['sum'], 'borrower_rate':['mean']})
+	roi['roi'] = roi.apply(lambda row : (row[('principal_paid', 'sum')]+row[('interest_paid', 'sum')]-row[('amount_borrowed', 'sum')])/row[('amount_borrowed', 'sum')], axis=1)
+	roi['yield'] = roi.apply(lambda row : math.pow(1+row['roi'], 1/3) -1, axis=1)
+	roi['count'] = roi.apply(lambda row : len(data[working['prosper_rating']==row.name]), axis=1)
+	roi['complete_count'] = roi.apply(lambda row : len(data[(data['prosper_rating']==row.name) & (data['status']=='COMPLETED')]), axis=1)
+	roi['completion_rate'] = roi.apply(lambda row : row['complete_count']/row['count'], axis=1)
+	roi['expected_payment'] = roi.apply(lambda row : monthly_payment(row[('amount_borrowed', 'sum')], row[('borrower_rate', 'mean')], 36)*36, axis=1)
+	roi['expected_paid'] = roi.apply(lambda row : row['expected_payment']*row['completion_rate'], axis=1)
+	roi['expected_roi'] = roi.apply(lambda row : (row['expected_paid']-row[('amount_borrowed', 'sum')])/row[('amount_borrowed', 'sum')], axis=1)
+
+	print(roi)
+
+loan36 = pd.read_csv('loan36.csv')
+
+#we only work on loans order than 36 months
+working = loan36[loan36['origination_date'] < '2015-06-01']
+working = working[(working['loan_status_description'] != 'CANCELLED') & (working['loan_status_description'] != 'CURRENT')]
+working.loan_status_description.unique()
+working['status'] = working.apply(lambda row: 'COMPLETED' if row.loan_status_description =='COMPLETED' else 'DEFAULTED', axis=1)
+working['principal_paid'] = working.apply(lambda row: float(row['principal_paid']), axis=1)
+working['interest_paid'] = working.apply(lambda row: float(row['interest_paid']), axis=1)
+working['rate_range'] = working.apply(lambda row: int(row['borrower_rate']*100)/100, axis=1)
+
+summary(working)
+
+sns.countplot(x='loan_status_description', data=working, palette='hls')
+sns.countplot(x='prosper_rating', data=loan36, palette='hls')
+
 
 def loan_summary(data):
 	summary(data)
@@ -66,23 +90,8 @@ def loan_summary(data):
 
 	print(rate_completions)
 	#return stats
-def clean_up_loan_data(data):
-	data['principal_paid'] = data.apply(lambda row: float(row['principal_paid']), axis=1)
-	data['interest_paid'] = data.apply(lambda row: float(row['interest_paid']), axis=1)
 
-
-#start to clean/normalize data
-#1. Remove CURRENT and CANCELLED loans
-working_data = pd.DataFrame(loan36[(loan36['loan_status_description'] !='CURRENT') & (loan36['loan_status_description'] !='CANCELLED')])
-#2. Make CHARGEOFF as DEFAULTED
-working_data['status'] = working_data.apply(lambda row: 'COMPLETED' if row.loan_status_description =='COMPLETED' else 'DEFAULTED', axis=1)
-#3. borrower_rate range
-working_data['rate_range'] = working_data.apply(lambda row: int(row['borrower_rate']*100)/100, axis=1)
-
-#4. Rename prosper_rating AA to '0' for easy sorting
-working_data['prosper_rating'] = working_data.apply(lambda row: '0' if row.prosper_rating =='AA' else row.prosper_rating, axis=1)
-
-loan_summary(working_data)
+loan_summary(working)
 
 
 def pred(working, rating):
