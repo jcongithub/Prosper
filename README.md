@@ -17,3 +17,6 @@ abcabcabc
 >print("I love %s in %s" % ("programming", "Python"))
 >print("I love {programming} in {python}".format(programming="programming", python="Python"))
 >print("I love {} in {}".format("programming", "Python"))
+
+4.check if a module installed
+>python -c "import modual_name"
